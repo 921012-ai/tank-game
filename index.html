@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>坦克射擊遊戲</title>
+  <style>
+    body {
+      background-color: #222;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+    }
+    /* 遊戲開始前畫面 */
+    #preGame {
+      padding: 20px;
+    }
+    #preGame select, #preGame input, #preGame button {
+      padding: 10px;
+      font-size: 16px;
+      margin: 10px;
+    }
+    /* 遊戲畫面 */
+    #gameScreen {
+      display: none;
+      position: relative;
+      margin: 0 auto;
+      border: 2px solid #fff;
+      background-color: #444;
+    }
+    #gameCanvas {
+      background-color: #333;
+      display: block;
+      margin: auto;
+    }
+    #scoreBoard {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 16px;
+      text-align: left;
+    }
+    #skillDisplay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255,255,255,0.9);
+      color: black;
+      padding: 20px;
+      font-size: 24px;
+      border-radius: 10px;
+      display: none;
+    }
+    /* 遊戲結束畫面 */
+    #gameOver {
+      display: none;
+      padding: 20px;
+    }
+    #gameOver button {
+      padding: 10px 20px;
+      font-size: 18px;
+      margin-top: 20px;
+    }
+    /* 音效開關 */
+    #soundToggle {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 遊戲開始前 -->
+  <div id="preGame">
+    <h1>坦克射擊遊戲</h1>
+    <div id="rules">
+      <h3>遊戲規則：</h3>
+      <p>1. 使用方向鍵 (上下左右) 移動坦克，按空白鍵射擊。</p>
+      <p>2. 障礙物與特殊方塊會從上往下移動，時間越少移動速度越快。</p>
+      <p>3. 射擊特殊方塊可隨機獲得技能（防護罩、強化砲彈、瘋狂模式），技能名稱會在畫面中間顯示約3秒，且會產生相應效果。</p>
+      <p>4. 敵方坦克隨機出現並發射子彈，被敵方子彈擊中或障礙物碰到坦克則遊戲結束。</p>
+      <p>5. 遊戲倒數結束後，若得分大於100則顯示「勝利」，否則「失敗」。</p>
+    </div>
+    <div>
+      <label>選擇遊戲模式：
+        <select id="gameMode">
+          <option value="easy">簡單</option>
+          <option value="medium">中等</option>
+          <option value="hard">困難</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>選擇坦克顏色：
+        <select id="tankColor">
+          <option value="red">紅色</option>
+          <option value="blue">藍色</option>
+          <option value="green">綠色</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>自訂倒數時間（秒）：
+        <input type="number" id="gameTime" value="30" min="10" max="60">
+      </label>
+    </div>
+    <div>
+      <label>音效：
+        <select id="soundToggle">
+          <option value="on">開</option>
+          <option value="off">關</option>
+        </select>
+      </label>
+    </div>
+    <button onclick="startGame()">開始遊戲</button>
+  </div>
+
+  <!-- 遊戲進行中 -->
+  <div id="gameScreen">
+    <div id="scoreBoard">
+      <p>分數: <span id="score">0</span></p>
+      <p>時間: <span id="timer">30</span></p>
+      <p>技能: <span id="currentSkill">無</span></p>
+    </div>
+    <div id="skillDisplay"></div>
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+  </div>
+
+  <!-- 遊戲結束後 -->
+  <div id="gameOver">
+    <h2 id="resultText"></h2>
+    <p>你的分數是：<span id="finalScore"></span></p>
+    <button onclick="restartGame()">重新開始</button>
+    <div id="highScore"></div>
+  </div>
+
+  <!-- 引入 Howler.js (CDN) 用於音效 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.3/howler.min.js"></script>
+
+  <script>
+    // 取得 DOM 元素
+    const preGame = document.getElementById("preGame");
+    const gameScreen = document.getElementById("gameScreen");
+    const gameOverScreen = document.getElementById("gameOver");
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreElem = document.getElementById("score");
+    const timerElem = document.getElementById("timer");
+    const currentSkillElem = document.getElementById("currentSkill");
+    const skillDisplayElem = document.getElementById("skillDisplay");
+    const finalScoreElem = document.getElementById("finalScore");
+    const resultTextElem = document.getElementById("resultText");
+    const soundToggleSelect = document.getElementById("soundToggle");
+
+    // 遊戲設定變數
+    let gameMode, tankColor, customTime, soundEnabled;
+    let gameTime; // 倒數時間（秒）
+    let obstacleSpeed; // 障礙物移動速度
+    let playerSpeed; // 玩家坦克移動速度
+    let bulletSpeed; // 玩家子彈速度
+    let enemyBulletSpeed; // 敵方子彈速度
+
+    // 遊戲物件
+    let tank, bullets = [], obstacles = [], specialBlocks = [], enemyTanks = [], enemyBullets = [];
+    let particles = []; // 爆炸粒子
+    let skills = ["防護罩", "強化砲彈", "瘋狂模式"];
+    let activeSkill = "無";
+    let skillActiveTime = 0; // 技能持續時間（秒），若 > 0 表示技能生效
+    let shieldActive = false; // 防護罩狀態
+
+    // 鍵盤控制
+    let keys = {};
+    document.addEventListener("keydown", (e) => { keys[e.key] = true; });
+    document.addEventListener("keyup", (e) => { keys[e.key] = false; });
+
+    // 遊戲計時與主迴圈控制
+    let gameLoopId, timerId;
+
+    // 音效與背景音樂 (使用 Howler)
+    const bgMusic = new Howl({
+      src: ['https://freesound.org/data/previews/250/250629_4486188-lq.mp3'],
+      loop: true,
+      volume: 0.3
+    });
+    const shootSound = new Howl({ src: ['https://freesound.org/data/previews/66/66717_931655-lq.mp3'], volume: 0.5 });
+    const explosionSound = new Howl({ src: ['https://freesound.org/data/previews/235/235968_3987030-lq.mp3'], volume: 0.7 });
+    const enemyShootSound = new Howl({ src: ['https://freesound.org/data/previews/198/198841_2859976-lq.mp3'], volume: 0.5 });
+
+    function playSound(sound) {
+      if(soundEnabled) sound.play();
+    }
+
+    // 開始遊戲
+    function startGame() {
+      gameMode = document.getElementById("gameMode").value;
+      tankColor = document.getElementById("tankColor").value;
+      customTime = parseInt(document.getElementById("gameTime").value);
+      gameTime = customTime;
+      soundEnabled = (soundToggleSelect.value === "on");
+
+      if(soundEnabled) bgMusic.play();
+
+      // 根據難度設定參數
+      if (gameMode === "easy") {
+        playerSpeed = 4; bulletSpeed = 5; enemyBulletSpeed = 4; obstacleSpeed = 1;
+      } else if (gameMode === "medium") {
+        playerSpeed = 6; bulletSpeed = 7; enemyBulletSpeed = 5; obstacleSpeed = 2;
+      } else { // hard
+        playerSpeed = 8; bulletSpeed = 9; enemyBulletSpeed = 6; obstacleSpeed = 3;
+      }
+
+      // 初始化遊戲物件
+      tank = { x: canvas.width/2 - 15, y: canvas.height - 60, width: 30, height: 30, color: tankColor, speed: playerSpeed };
+      bullets = []; obstacles = []; specialBlocks = []; enemyTanks = []; enemyBullets = []; particles = [];
+      activeSkill = "無"; skillActiveTime = 0; shieldActive = false;
+      score = 0;
+      scoreElem.innerText = score.toString();
+      timerElem.innerText = gameTime.toString();
+      currentSkillElem.innerText = activeSkill;
+
+      preGame.style.display = "none";
+      gameOverScreen.style.display = "none";
+      gameScreen.style.display = "block";
+
+      // 啟動計時器
+      timerId = setInterval(() => {
+        gameTime--;
+        timerElem.innerText = gameTime.toString();
+        // 隨著時間減少，障礙物速度增加
+        obstacleSpeed += 0.1;
+        if (gameTime <= 0) endGame();
+      }, 1000);
+
+      // 啟動主遊戲迴圈
+      gameLoopId = requestAnimationFrame(gameLoop);
+
+      // 定時產生障礙物、特殊方塊與敵方坦克
+      setInterval(spawnObstacle, 2000);
+      setInterval(spawnSpecialBlock, 5000);
+      setInterval(spawnEnemyTank, 7000);
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      gameLoopId = requestAnimationFrame(gameLoop);
+    }
+
+    // 更新遊戲狀態
+    function update() {
+      // 玩家移動
+      if (keys["ArrowLeft"] && tank.x > 0) { tank.x -= tank.speed; }
+      if (keys["ArrowRight"] && tank.x < canvas.width - tank.width) { tank.x += tank.speed; }
+      if (keys["ArrowUp"] && tank.y > 0) { tank.y -= tank.speed; }
+      if (keys["ArrowDown"] && tank.y < canvas.height - tank.height) { tank.y += tank.speed; }
+      // 玩家射擊
+      if (keys[" "] && bullets.length < 5) {
+        bullets.push({ x: tank.x + tank.width/2 - 2.5, y: tank.y, speed: bulletSpeed, strong: (activeSkill === "強化砲彈") });
+        keys[" "] = false;
+        playSound(shootSound);
+      }
+
+      // 更新玩家子彈
+      bullets.forEach((b, i) => {
+        b.y -= b.speed;
+        if (b.y < 0) { bullets.splice(i, 1); }
+      });
+
+      // 更新障礙物
+      obstacles.forEach((o, i) => {
+        o.y += obstacleSpeed;
+        if (o.y > canvas.height) { obstacles.splice(i, 1); }
+      });
+      // 若障礙物碰到玩家，結束遊戲
+      obstacles.forEach((o) => {
+        if (tank.x < o.x + o.width &&
+            tank.x + tank.width > o.x &&
+            tank.y < o.y + o.height &&
+            tank.y + tank.height > o.y) {
+          endGame();
+        }
+      });
+
+      // 更新特殊方塊
+      specialBlocks.forEach((s, i) => {
+        s.y += obstacleSpeed + 0.5;
+        if (s.y > canvas.height) { specialBlocks.splice(i, 1); }
+      });
+
+      // 更新敵方坦克
+      enemyTanks.forEach((e, i) => {
+        e.y += obstacleSpeed * 0.8;
+        if (e.y > canvas.height) { enemyTanks.splice(i, 1); }
+      });
+
+      // 更新敵方子彈
+      enemyBullets.forEach((b, i) => {
+        b.y += b.speed;
+        if (b.y > canvas.height) { enemyBullets.splice(i, 1); }
+      });
+
+      // 更新爆炸粒子
+      particles.forEach((p, i) => {
+        p.update();
+        if (p.alpha <= 0) particles.splice(i, 1);
+      });
+
+      // 檢查玩家子彈與障礙物碰撞
+      bullets.forEach((b, bi) => {
+        obstacles.forEach((o, oi) => {
+          if (b.x < o.x + o.width && b.x + 5 > o.x && b.y < o.y + o.height && b.y + 5 > o.y) {
+            // 爆炸效果
+            spawnExplosion(o.x + o.width/2, o.y + o.height/2);
+            playSound(explosionSound);
+            bullets.splice(bi, 1);
+            obstacles.splice(oi, 1);
+            // 如果強化砲彈技能生效，子彈可穿透，不加分
+            if (!b.strong) {
+              score += 10;
+              scoreElem.innerText = score.toString();
+            }
+          }
+        });
+      });
+
+      // 檢查玩家子彈與特殊方塊碰撞 (獲得技能)
+      bullets.forEach((b, bi) => {
+        specialBlocks.forEach((s, si) => {
+          if (b.x < s.x + s.width && b.x + 5 > s.x && b.y < s.y + s.height && b.y + 5 > s.y) {
+            playSound(explosionSound);
+            bullets.splice(bi, 1);
+            specialBlocks.splice(si, 1);
+            score += 15;
+            scoreElem.innerText = score.toString();
+            activeSkill = skills[Math.floor(Math.random() * skills.length)];
+            currentSkillElem.innerText = activeSkill;
+            showSkill(activeSkill);
+            // 依照技能效果啟動
+            if (activeSkill === "防護罩") {
+              shieldActive = true;
+              setTimeout(() => { shieldActive = false; }, 5000);
+            } else if (activeSkill === "強化砲彈") {
+              // 未來玩家子彈會穿透障礙物 (在檢查碰撞時使用 b.strong 標記)
+            } else if (activeSkill === "瘋狂模式") {
+              tank.speed *= 1.5;
+              setTimeout(() => { tank.speed = playerSpeed; }, 5000);
+            }
+          }
+        });
+      });
+
+      // 檢查敵方子彈是否擊中玩家 (若防護罩開啟則忽略)
+      enemyBullets.forEach((b) => {
+        if (!shieldActive && b.x < tank.x + tank.width && b.x + 5 > tank.x && b.y < tank.y + tank.height && b.y + 5 > tank.y) {
+          endGame();
+        }
+      });
+
+      // 檢查敵方坦克與玩家碰撞
+      enemyTanks.forEach((e) => {
+        if (tank.x < e.x + e.width && tank.x + tank.width > e.x && tank.y < e.y + e.height && tank.y + tank.height > e.y) {
+          endGame();
+        }
+      });
+    }
+
+    // 畫面渲染
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 畫玩家坦克 (若有防護罩則加圓形描邊)
+      ctx.fillStyle = tank.color;
+      ctx.fillRect(tank.x, tank.y, tank.width, tank.height);
+      if (shieldActive) {
+        ctx.strokeStyle = "cyan";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(tank.x + tank.width/2, tank.y + tank.height/2, tank.width, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // 畫玩家子彈
+      ctx.fillStyle = "yellow";
+      bullets.forEach((b) => { ctx.fillRect(b.x, b.y, 5, 5); });
+      // 畫障礙物
+      ctx.fillStyle = "gray";
+      obstacles.forEach((o) => { ctx.fillRect(o.x, o.y, o.width, o.height); });
+      // 畫特殊方塊
+      ctx.fillStyle = "blue";
+      specialBlocks.forEach((s) => { ctx.fillRect(s.x, s.y, s.width, s.height); });
+      // 畫敵方坦克
+      ctx.fillStyle = "orange";
+      enemyTanks.forEach((e) => { ctx.fillRect(e.x, e.y, e.width, e.height); });
+      // 畫敵方子彈
+      ctx.fillStyle = "red";
+      enemyBullets.forEach((b) => { ctx.fillRect(b.x, b.y, 5, 5); });
+      // 畫爆炸粒子
+      particles.forEach((p) => { p.draw(ctx); });
+    }
+
+    // 爆炸粒子效果
+    class Particle {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.alpha = 1;
+        this.size = Math.random() * 3 + 2;
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= 0.05;
+      }
+      draw(ctx) {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = "orange";
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.restore();
+      }
+    }
+
+    function spawnExplosion(x, y) {
+      for (let i = 0; i < 20; i++) {
+        particles.push(new Particle(x, y));
+      }
+    }
+
+    // 顯示技能名稱於畫面中央約 3 秒
+    function showSkill(skillName) {
+      skillDisplayElem.innerText = skillName;
+      skillDisplayElem.style.display = "block";
+      setTimeout(() => { skillDisplayElem.style.display = "none"; }, 3000);
+    }
+
+    // 隨機產生障礙物
+    function spawnObstacle() {
+      let obs = { 
+        x: Math.random() * (canvas.width - 30), 
+        y: 0, 
+        width: 30, 
+        height: 30 
+      };
+      obstacles.push(obs);
+    }
+
+    // 隨機產生特殊方塊
+    function spawnSpecialBlock() {
+      let sp = { 
+        x: Math.random() * (canvas.width - 30), 
+        y: 0, 
+        width: 30, 
+        height: 30 
+      };
+      specialBlocks.push(sp);
+    }
+
+    // 隨機產生敵方坦克，並讓其定時射擊敵方子彈
+    function spawnEnemyTank() {
+      let enemy = { 
+        x: Math.random() * (canvas.width - 30), 
+        y: 0, 
+        width: 30, 
+        height: 30, 
+        speed: 2 
+      };
+      enemyTanks.push(enemy);
+      // 讓此敵方坦克每 2 秒發射一枚子彈
+      setInterval(() => {
+        if (enemyTanks.includes(enemy)) {
+          enemyBullets.push({ 
+            x: enemy.x + enemy.width/2 - 2.5, 
+            y: enemy.y + enemy.height, 
+            speed: enemyBulletSpeed 
+          });
+          playSound(enemyShootSound);
+        }
+      }, 2000);
+    }
+
+    // 遊戲結束處理
+    function endGame() {
+      clearInterval(timerId);
+      cancelAnimationFrame(gameLoopId);
+      gameScreen.style.display = "none";
+      gameOverScreen.style.display = "block";
+      finalScoreElem.innerText = score.toString();
+      resultTextElem.innerText = (score > 100) ? "勝利！" : "失敗！";
+      // 儲存最高分到 localStorage (簡單排行榜)
+      let highScores = JSON.parse(localStorage.getItem("highScores") || "[]");
+      highScores.push(score);
+      highScores.sort((a,b) => b - a);
+      localStorage.setItem("highScores", JSON.stringify(highScores));
+      document.getElementById("highScore").innerText = "最高分：" + highScores[0];
+      bgMusic.stop();
+    }
+
+    function restartGame() {
+      location.reload();
+    }
+  </script>
+</body>
+</html>
